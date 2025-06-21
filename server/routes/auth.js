@@ -1,7 +1,9 @@
 import express from 'express';
 import { logger } from '../utils/logger.js';
+const app = express();
 
 const router = express.Router();
+app.use(express.json()); // <-- This is required for JSON POST bodies
 
 // Mock users database
 const mockUsers = {
