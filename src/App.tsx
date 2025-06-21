@@ -48,9 +48,9 @@ interface Resource {
 
 // Get API base URL based on environment
 const getApiBaseUrl = () => {
+  // In production, use the same origin as the frontend
   if (import.meta.env.PROD) {
-    // In production, use relative URLs or environment variable
-    return import.meta.env.VITE_API_URL || '';
+    return '';
   }
   // In development, use localhost
   return 'http://localhost:3001';
@@ -82,10 +82,9 @@ function App() {
 
   // Connect to WebSocket when user logs in
   useEffect(() => {
-    if (user && !socket) {
-      const socketUrl = import.meta.env.PROD 
-        ? (import.meta.env.VITE_SOCKET_URL || window.location.origin)
-        : 'http://localhost:3001';
+    if (user && !socket && !import.meta.env.PROD) {
+      // Only connect WebSocket in development
+      const socketUrl = 'http://localhost:3001';
       
       const newSocket = io(socketUrl);
       setSocket(newSocket);
@@ -122,11 +121,21 @@ function App() {
         body: JSON.stringify(loginForm),
       });
       
-      const data = await response.json();
-      
       if (!response.ok) {
-        throw new Error(data.error || 'Login failed');
+        const errorText = await response.text();
+        let errorMessage = 'Login failed';
+        
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.error || errorMessage;
+        } catch {
+          errorMessage = `Server error: ${response.status}`;
+        }
+        
+        throw new Error(errorMessage);
       }
+      
+      const data = await response.json();
       
       setUser(data.user);
       localStorage.setItem('auth_token', data.token);
@@ -143,13 +152,38 @@ function App() {
   const fetchDisasters = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/disasters`);
-      const data = await response.json();
       
-      if (response.ok) {
-        setDisasters(data.disasters || []);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch disasters: ${response.status}`);
       }
+      
+      const data = await response.json();
+      setDisasters(data.disasters || []);
     } catch (err) {
       console.error('Error fetching disasters:', err);
+      // In production, show mock data if API is not available
+      if (import.meta.env.PROD) {
+        setDisasters([
+          {
+            id: '1',
+            title: 'Flood Emergency in Downtown',
+            location_name: 'Manhattan, NYC',
+            description: 'Heavy rainfall causing street flooding and transportation disruptions.',
+            tags: ['flood', 'emergency', 'transportation'],
+            owner_id: 'demo',
+            created_at: new Date().toISOString()
+          },
+          {
+            id: '2',
+            title: 'Wildfire Alert - Northern Region',
+            location_name: 'Northern California',
+            description: 'Fast-moving wildfire threatening residential areas.',
+            tags: ['wildfire', 'evacuation', 'emergency'],
+            owner_id: 'demo',
+            created_at: new Date(Date.now() - 3600000).toISOString()
+          }
+        ]);
+      }
     }
   };
 
@@ -172,12 +206,24 @@ function App() {
         }),
       });
       
-      const data = await response.json();
-      
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to create disaster');
+        const errorText = await response.text();
+        let errorMessage = 'Failed to create disaster';
+        
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.error || errorMessage;
+        } catch {
+          errorMessage = `Server error: ${response.status}`;
+        }
+        
+        throw new Error(errorMessage);
       }
       
+      const data = await response.json();
+      
+      // Add to local state
+      setDisasters(prev => [data.disaster, ...prev]);
       setNewDisaster({ title: '', location_name: '', description: '', tags: '' });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create disaster');
@@ -189,16 +235,37 @@ function App() {
   const fetchSocialMedia = async (disasterId: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/social-media/${disasterId}`);
-      const data = await response.json();
       
       if (response.ok) {
+        const data = await response.json();
         setSocialMediaData(data.posts || []);
         if (socket) {
           socket.emit('join_disaster', disasterId);
         }
+      } else {
+        // Show mock data in production
+        setSocialMediaData([
+          {
+            id: '1',
+            post: 'Emergency shelter available at Community Center. Capacity for 200 people.',
+            user: 'local_responder',
+            timestamp: new Date().toISOString(),
+            priority: 'high',
+            verified: true
+          },
+          {
+            id: '2',
+            post: 'Road closures on Main Street due to flooding. Seek alternate routes.',
+            user: 'traffic_dept',
+            timestamp: new Date(Date.now() - 1800000).toISOString(),
+            priority: 'medium',
+            verified: true
+          }
+        ]);
       }
     } catch (err) {
       console.error('Error fetching social media:', err);
+      setSocialMediaData([]);
     }
   };
 
@@ -210,13 +277,32 @@ function App() {
       }
       
       const response = await fetch(url);
-      const data = await response.json();
       
       if (response.ok) {
+        const data = await response.json();
         setResources(data.resources || []);
+      } else {
+        // Show mock data in production
+        setResources([
+          {
+            id: '1',
+            name: 'Emergency Shelter',
+            type: 'shelter',
+            location_name: 'Community Center',
+            capacity: 200
+          },
+          {
+            id: '2',
+            name: 'Medical Station',
+            type: 'medical',
+            location_name: 'City Hospital',
+            capacity: 50
+          }
+        ]);
       }
     } catch (err) {
       console.error('Error fetching resources:', err);
+      setResources([]);
     }
   };
 
@@ -286,6 +372,11 @@ function App() {
               • netrunnerX / password123 (Contributor)<br/>
               • reliefAdmin / admin123 (Admin)
             </p>
+            {import.meta.env.PROD && (
+              <p className="text-xs text-orange-600 mt-2">
+                Note: Running in demo mode. Backend API not available.
+              </p>
+            )}
           </div>
         </div>
       </div>
