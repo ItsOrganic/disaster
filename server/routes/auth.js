@@ -60,7 +60,6 @@ router.post('/login', (req, res) => {
   }
   
   logger.info(`User logged in: ${username}`);
-  localStorage.setItem('token', response.data.token);
   // Return user ID as token (in production, use JWT)
   res.json({
     token: user.id,
