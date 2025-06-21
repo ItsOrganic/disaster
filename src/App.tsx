@@ -46,6 +46,18 @@ interface Resource {
   distance_km?: number;
 }
 
+// Get API base URL based on environment
+const getApiBaseUrl = () => {
+  if (import.meta.env.PROD) {
+    // In production, use relative URLs or environment variable
+    return import.meta.env.VITE_API_URL || '';
+  }
+  // In development, use localhost
+  return 'http://localhost:3001';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [disasters, setDisasters] = useState<Disaster[]>([]);
@@ -71,7 +83,11 @@ function App() {
   // Connect to WebSocket when user logs in
   useEffect(() => {
     if (user && !socket) {
-      const newSocket = io('http://localhost:3001');
+      const socketUrl = import.meta.env.PROD 
+        ? (import.meta.env.VITE_SOCKET_URL || window.location.origin)
+        : 'http://localhost:3001';
+      
+      const newSocket = io(socketUrl);
       setSocket(newSocket);
       
       newSocket.on('disaster_created', (disaster) => {
@@ -98,7 +114,7 @@ function App() {
     setError(null);
     
     try {
-      const response = await fetch('http://localhost:3001/api/auth/login', {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -126,7 +142,7 @@ function App() {
 
   const fetchDisasters = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/disasters');
+      const response = await fetch(`${API_BASE_URL}/api/disasters`);
       const data = await response.json();
       
       if (response.ok) {
@@ -144,7 +160,7 @@ function App() {
     
     try {
       const token = localStorage.getItem('auth_token');
-      const response = await fetch('http://localhost:3001/api/disasters', {
+      const response = await fetch(`${API_BASE_URL}/api/disasters`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -172,7 +188,7 @@ function App() {
 
   const fetchSocialMedia = async (disasterId: string) => {
     try {
-      const response = await fetch(`http://localhost:3001/api/social-media/${disasterId}`);
+      const response = await fetch(`${API_BASE_URL}/api/social-media/${disasterId}`);
       const data = await response.json();
       
       if (response.ok) {
@@ -188,7 +204,7 @@ function App() {
 
   const fetchResources = async (disasterId: string, lat?: number, lng?: number) => {
     try {
-      let url = `http://localhost:3001/api/resources/${disasterId}`;
+      let url = `${API_BASE_URL}/api/resources/${disasterId}`;
       if (lat && lng) {
         url += `?lat=${lat}&lng=${lng}&radius=10000`;
       }
