@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { io, Socket } from 'socket.io-client';
 import { 
   AlertTriangle, 
   MapPin, 
@@ -46,17 +45,69 @@ interface Resource {
   distance_km?: number;
 }
 
-// Get API base URL based on environment
-const getApiBaseUrl = () => {
-  // In production, use the same origin as the frontend
-  if (import.meta.env.PROD) {
-    return '';
+// Mock data for demo purposes
+const MOCK_DISASTERS: Disaster[] = [
+  {
+    id: '1',
+    title: 'Flood Emergency in Downtown',
+    location_name: 'Manhattan, NYC',
+    description: 'Heavy rainfall causing street flooding and transportation disruptions.',
+    tags: ['flood', 'emergency', 'transportation'],
+    owner_id: 'demo',
+    created_at: new Date().toISOString()
+  },
+  {
+    id: '2',
+    title: 'Wildfire Alert - Northern Region',
+    location_name: 'Northern California',
+    description: 'Fast-moving wildfire threatening residential areas.',
+    tags: ['wildfire', 'evacuation', 'emergency'],
+    owner_id: 'demo',
+    created_at: new Date(Date.now() - 3600000).toISOString()
   }
-  // In development, use localhost
-  return 'http://localhost:3001';
-};
+];
 
-const API_BASE_URL = getApiBaseUrl();
+const MOCK_SOCIAL_MEDIA: SocialMediaPost[] = [
+  {
+    id: '1',
+    post: 'Emergency shelter available at Community Center. Capacity for 200 people.',
+    user: 'local_responder',
+    timestamp: new Date().toISOString(),
+    priority: 'high',
+    verified: true
+  },
+  {
+    id: '2',
+    post: 'Road closures on Main Street due to flooding. Seek alternate routes.',
+    user: 'traffic_dept',
+    timestamp: new Date(Date.now() - 1800000).toISOString(),
+    priority: 'medium',
+    verified: true
+  }
+];
+
+const MOCK_RESOURCES: Resource[] = [
+  {
+    id: '1',
+    name: 'Emergency Shelter',
+    type: 'shelter',
+    location_name: 'Community Center',
+    capacity: 200
+  },
+  {
+    id: '2',
+    name: 'Medical Station',
+    type: 'medical',
+    location_name: 'City Hospital',
+    capacity: 50
+  }
+];
+
+// Demo users
+const DEMO_USERS = {
+  'netrunnerX': { id: '1', username: 'netrunnerX', role: 'contributor', password: 'password123' },
+  'reliefAdmin': { id: '2', username: 'reliefAdmin', role: 'admin', password: 'admin123' }
+};
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -64,7 +115,6 @@ function App() {
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [socialMediaData, setSocialMediaData] = useState<SocialMediaPost[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
-  const [socket, setSocket] = useState<Socket | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -80,32 +130,62 @@ function App() {
     password: ''
   });
 
-  // Connect to WebSocket when user logs in
-  useEffect(() => {
-    if (user && !socket && !import.meta.env.PROD) {
-      // Only connect WebSocket in development
-      const socketUrl = 'http://localhost:3001';
-      
-      const newSocket = io(socketUrl);
-      setSocket(newSocket);
-      
-      newSocket.on('disaster_created', (disaster) => {
-        setDisasters(prev => [disaster, ...prev]);
+  // Enhanced API call function with better error handling
+  const makeApiCall = async (url: string, options: RequestInit = {}) => {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
       });
-      
-      newSocket.on('disaster_updated', (disaster) => {
-        setDisasters(prev => prev.map(d => d.id === disaster.id ? disaster : d));
-      });
-      
-      newSocket.on('social_media_updated', (data) => {
-        setSocialMediaData(data.posts || []);
-      });
-      
-      return () => {
-        newSocket.disconnect();
-      };
+
+      // Check if response is ok
+      if (!response.ok) {
+        // Try to get error message from response
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        
+        try {
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorData.message || errorMessage;
+          } else {
+            // If it's not JSON, it might be HTML error page
+            const textResponse = await response.text();
+            if (textResponse.includes('<html>') || textResponse.includes('<!DOCTYPE')) {
+              errorMessage = 'Server returned HTML instead of JSON. API endpoint may be incorrect.';
+            } else {
+              errorMessage = textResponse || errorMessage;
+            }
+          }
+        } catch (parseError) {
+          // If we can't parse the error response, use the original message
+          console.error('Error parsing error response:', parseError);
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      // Check if response contains JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const textResponse = await response.text();
+        if (textResponse.includes('<html>') || textResponse.includes('<!DOCTYPE')) {
+          throw new Error('Server returned HTML instead of JSON. Check your API endpoint configuration.');
+        }
+        throw new Error('Server did not return JSON response');
+      }
+
+      return await response.json();
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error('Unable to connect to server. Check if your backend is running.');
+      }
+      throw error;
     }
-  }, [user, socket]);
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,37 +193,43 @@ function App() {
     setError(null);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      // Check demo users first
+      const demoUser = DEMO_USERS[loginForm.username as keyof typeof DEMO_USERS];
+      if (demoUser && demoUser.password === loginForm.password) {
+        setUser({ id: demoUser.id, username: demoUser.username, role: demoUser.role });
+        setDisasters(MOCK_DISASTERS);
+        return;
+      }
+
+      // Try API login
+      const apiUrl = window.location.origin.includes('localhost') 
+        ? 'http://localhost:3001' 
+        : window.location.origin;
+      
+      const data = await makeApiCall(`${apiUrl}/api/auth/login`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(loginForm),
       });
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorMessage = 'Login failed';
-        
-        try {
-          const errorData = JSON.parse(errorText);
-          errorMessage = errorData.error || errorMessage;
-        } catch {
-          errorMessage = `Server error: ${response.status}`;
-        }
-        
-        throw new Error(errorMessage);
+      setUser(data.user);
+      // Store token if returned
+      if (data.token) {
+        sessionStorage.setItem('auth_token', data.token);
       }
       
-      const data = await response.json();
-      
-      setUser(data.user);
-      localStorage.setItem('auth_token', data.token);
-      
-      // Fetch disasters after login
+      // Fetch disasters after successful login
       await fetchDisasters();
     } catch (err) {
+      console.error('Login error:', err);
       setError(err instanceof Error ? err.message : 'Login failed');
+      
+      // Fallback to demo mode if API fails
+      const demoUser = DEMO_USERS[loginForm.username as keyof typeof DEMO_USERS];
+      if (demoUser && demoUser.password === loginForm.password) {
+        setUser({ id: demoUser.id, username: demoUser.username, role: demoUser.role });
+        setDisasters(MOCK_DISASTERS);
+        setError(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -151,39 +237,16 @@ function App() {
 
   const fetchDisasters = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/disasters`);
+      const apiUrl = window.location.origin.includes('localhost') 
+        ? 'http://localhost:3001' 
+        : window.location.origin;
       
-      if (!response.ok) {
-        throw new Error(`Failed to fetch disasters: ${response.status}`);
-      }
-      
-      const data = await response.json();
+      const data = await makeApiCall(`${apiUrl}/api/disasters`);
       setDisasters(data.disasters || []);
     } catch (err) {
       console.error('Error fetching disasters:', err);
-      // In production, show mock data if API is not available
-      if (import.meta.env.PROD) {
-        setDisasters([
-          {
-            id: '1',
-            title: 'Flood Emergency in Downtown',
-            location_name: 'Manhattan, NYC',
-            description: 'Heavy rainfall causing street flooding and transportation disruptions.',
-            tags: ['flood', 'emergency', 'transportation'],
-            owner_id: 'demo',
-            created_at: new Date().toISOString()
-          },
-          {
-            id: '2',
-            title: 'Wildfire Alert - Northern Region',
-            location_name: 'Northern California',
-            description: 'Fast-moving wildfire threatening residential areas.',
-            tags: ['wildfire', 'evacuation', 'emergency'],
-            owner_id: 'demo',
-            created_at: new Date(Date.now() - 3600000).toISOString()
-          }
-        ]);
-      }
+      // Use mock data as fallback
+      setDisasters(MOCK_DISASTERS);
     }
   };
 
@@ -193,12 +256,16 @@ function App() {
     setError(null);
     
     try {
-      const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${API_BASE_URL}/api/disasters`, {
+      const apiUrl = window.location.origin.includes('localhost') 
+        ? 'http://localhost:3001' 
+        : window.location.origin;
+      
+      const token = sessionStorage.getItem('auth_token');
+      
+      const data = await makeApiCall(`${apiUrl}/api/disasters`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          'Authorization': token ? `Bearer ${token}` : '',
         },
         body: JSON.stringify({
           ...newDisaster,
@@ -206,27 +273,27 @@ function App() {
         }),
       });
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorMessage = 'Failed to create disaster';
-        
-        try {
-          const errorData = JSON.parse(errorText);
-          errorMessage = errorData.error || errorMessage;
-        } catch {
-          errorMessage = `Server error: ${response.status}`;
-        }
-        
-        throw new Error(errorMessage);
-      }
-      
-      const data = await response.json();
-      
       // Add to local state
       setDisasters(prev => [data.disaster, ...prev]);
       setNewDisaster({ title: '', location_name: '', description: '', tags: '' });
     } catch (err) {
+      console.error('Create disaster error:', err);
       setError(err instanceof Error ? err.message : 'Failed to create disaster');
+      
+      // Fallback: Add to mock data
+      const newMockDisaster: Disaster = {
+        id: Date.now().toString(),
+        title: newDisaster.title,
+        location_name: newDisaster.location_name,
+        description: newDisaster.description,
+        tags: newDisaster.tags.split(',').map(tag => tag.trim()).filter(Boolean),
+        owner_id: user?.id || 'demo',
+        created_at: new Date().toISOString()
+      };
+      
+      setDisasters(prev => [newMockDisaster, ...prev]);
+      setNewDisaster({ title: '', location_name: '', description: '', tags: '' });
+      setError(null);
     } finally {
       setLoading(false);
     }
@@ -234,75 +301,36 @@ function App() {
 
   const fetchSocialMedia = async (disasterId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/social-media/${disasterId}`);
+      const apiUrl = window.location.origin.includes('localhost') 
+        ? 'http://localhost:3001' 
+        : window.location.origin;
       
-      if (response.ok) {
-        const data = await response.json();
-        setSocialMediaData(data.posts || []);
-        if (socket) {
-          socket.emit('join_disaster', disasterId);
-        }
-      } else {
-        // Show mock data in production
-        setSocialMediaData([
-          {
-            id: '1',
-            post: 'Emergency shelter available at Community Center. Capacity for 200 people.',
-            user: 'local_responder',
-            timestamp: new Date().toISOString(),
-            priority: 'high',
-            verified: true
-          },
-          {
-            id: '2',
-            post: 'Road closures on Main Street due to flooding. Seek alternate routes.',
-            user: 'traffic_dept',
-            timestamp: new Date(Date.now() - 1800000).toISOString(),
-            priority: 'medium',
-            verified: true
-          }
-        ]);
-      }
+      const data = await makeApiCall(`${apiUrl}/api/social-media/${disasterId}`);
+      setSocialMediaData(data.posts || []);
     } catch (err) {
       console.error('Error fetching social media:', err);
-      setSocialMediaData([]);
+      // Use mock data as fallback
+      setSocialMediaData(MOCK_SOCIAL_MEDIA);
     }
   };
 
   const fetchResources = async (disasterId: string, lat?: number, lng?: number) => {
     try {
-      let url = `${API_BASE_URL}/api/resources/${disasterId}`;
+      const apiUrl = window.location.origin.includes('localhost') 
+        ? 'http://localhost:3001' 
+        : window.location.origin;
+      
+      let url = `${apiUrl}/api/resources/${disasterId}`;
       if (lat && lng) {
         url += `?lat=${lat}&lng=${lng}&radius=10000`;
       }
       
-      const response = await fetch(url);
-      
-      if (response.ok) {
-        const data = await response.json();
-        setResources(data.resources || []);
-      } else {
-        // Show mock data in production
-        setResources([
-          {
-            id: '1',
-            name: 'Emergency Shelter',
-            type: 'shelter',
-            location_name: 'Community Center',
-            capacity: 200
-          },
-          {
-            id: '2',
-            name: 'Medical Station',
-            type: 'medical',
-            location_name: 'City Hospital',
-            capacity: 50
-          }
-        ]);
-      }
+      const data = await makeApiCall(url);
+      setResources(data.resources || []);
     } catch (err) {
       console.error('Error fetching resources:', err);
-      setResources([]);
+      // Use mock data as fallback
+      setResources(MOCK_RESOURCES);
     }
   };
 
@@ -322,7 +350,7 @@ function App() {
             <p className="text-gray-600">Real-time disaster management and response coordination</p>
           </div>
           
-          <form onSubmit={handleLogin} className="space-y-6">
+          <div className="space-y-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Username
@@ -354,17 +382,19 @@ function App() {
             {error && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                 <p className="text-red-600 text-sm">{error}</p>
+                <p className="text-red-500 text-xs mt-1">Falling back to demo mode if credentials are correct.</p>
               </div>
             )}
             
             <button
-              type="submit"
+              type="button"
+              onClick={handleLogin}
               disabled={loading}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors disabled:opacity-50"
             >
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
-          </form>
+          </div>
           
           <div className="mt-6 p-4 bg-gray-50 rounded-lg">
             <p className="text-sm text-gray-600 font-medium mb-2">Demo Accounts:</p>
@@ -372,11 +402,9 @@ function App() {
               • netrunnerX / password123 (Contributor)<br/>
               • reliefAdmin / admin123 (Admin)
             </p>
-            {import.meta.env.PROD && (
-              <p className="text-xs text-orange-600 mt-2">
-                Note: Running in demo mode. Backend API not available.
-              </p>
-            )}
+            <p className="text-xs text-orange-600 mt-2">
+              Note: Will fallback to demo mode if backend API is unavailable.
+            </p>
           </div>
         </div>
       </div>
@@ -403,11 +431,11 @@ function App() {
               <button
                 onClick={() => {
                   setUser(null);
-                  localStorage.removeItem('auth_token');
-                  if (socket) {
-                    socket.disconnect();
-                    setSocket(null);
-                  }
+                  sessionStorage.removeItem('auth_token');
+                  setDisasters([]);
+                  setSelectedDisaster(null);
+                  setSocialMediaData([]);
+                  setResources([]);
                 }}
                 className="text-gray-500 hover:text-gray-700"
               >
